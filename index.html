@@ -1,0 +1,128 @@
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Smart Shoe Monitor</title>
+  <style>
+    body{font-family:Arial;margin:16px}
+    .card{padding:14px;border:1px solid #ddd;border-radius:14px;margin:12px 0}
+    .big{font-size:28px;font-weight:800}
+    .ok{background:#f6fff6}
+    .warn{background:#fff8e6}
+    .danger{background:#fff0f0}
+    .emg{background:#ffdddd;border:2px solid #ff0000}
+    button{padding:12px 16px;font-size:16px}
+  </style>
+</head>
+<body>
+  <h2>Smart Shoe Monitor</h2>
+
+  <div id="banner" class="card ok">
+    <div class="big" id="state">NORMAL</div>
+    <div id="detail">Waiting...</div>
+  </div>
+
+  <div class="card">
+    <div><b>Wearer Location</b></div>
+    <div class="big" id="gps">Not started</div>
+    <div><a id="map" href="#" target="_blank">Open in Maps</a></div>
+    <div id="gpsErr" style="color:red"></div>
+    <button onclick="enableGPS()">Enable Location</button>
+  </div>
+
+  <div class="card">
+    <div><b>Shoe Status</b></div>
+    <div class="big" id="shoe">-</div>
+    <div id="shoeAge">-</div>
+  </div>
+
+<script>
+const WEB_APP_URL = "https://script.google.com/a/macros/student.uitm.edu.my/s/AKfycbzbRyN3C3n8OlGwaI1Tb0n5X9fmgeODaFRBoticmQcsgjY6cQ0eU1sfHfaRzb0aCnGk/exec";
+const KEY = "avisaiko";
+
+let nearHits = 0;
+
+function setBanner(mode, detail){
+  const b=document.getElementById('banner');
+  document.getElementById('state').innerText=mode;
+  document.getElementById('detail').innerText=detail;
+  b.className='card ' + (mode==='EMERGENCY'?'emg':mode==='DANGER'?'danger':mode==='WARNING'?'warn':'ok');
+}
+
+async function postLoc(lat, lon){
+  const body = new URLSearchParams({ key: KEY, type:"loc", lat, lon });
+  await fetch(WEB_APP_URL, { method:"POST", body });
+}
+
+async function getCloud(){
+  const u = WEB_APP_URL + "?" + new URLSearchParams({ key: KEY }).toString();
+  const r = await fetch(u);
+  return await r.json();
+}
+
+function enableGPS(){
+  if(!navigator.geolocation){
+    document.getElementById('gpsErr').innerText='No GPS support';
+    return;
+  }
+  document.getElementById('gpsErr').innerText='';
+  const once = () => {
+    navigator.geolocation.getCurrentPosition(async pos=>{
+      const lat = pos.coords.latitude.toFixed(6);
+      const lon = pos.coords.longitude.toFixed(6);
+      document.getElementById('gps').innerText = lat + ", " + lon;
+      document.getElementById('map').href = "https://maps.google.com/?q=" + lat + "," + lon;
+      try{ await postLoc(lat, lon); }catch(e){}
+    }, err=>{
+      document.getElementById('gpsErr').innerText = "GPS error: " + err.message;
+    }, { enableHighAccuracy:true, timeout:10000, maximumAge:0 });
+  };
+  once();
+  setInterval(once, 5000);
+}
+
+function ageText(ms){
+  if(!ms) return "never";
+  const s = Math.floor(ms/1000);
+  if(s < 60) return s + "s ago";
+  return Math.floor(s/60) + "m ago";
+}
+
+async function poll(){
+  try{
+    const j = await getCloud();
+    if(!j.ok) throw new Error(j.err || "bad");
+
+    const lvl = j.level || "CLEAR";
+    const side = j.side || "NONE";
+
+    document.getElementById('shoe').innerText = side + " " + lvl;
+
+    const now = Date.now();
+    const statusAge = now - (j.status_ts || 0);
+    document.getElementById('shoeAge').innerText = "Shoe update: " + ageText(statusAge);
+
+    if(lvl === "NEAR") nearHits++;
+    else nearHits = Math.max(0, nearHits - 1);
+
+    if(nearHits >= 5){
+      setBanner("EMERGENCY", "Repeated NEAR detected ("+nearHits+"). Immediate attention needed.");
+    } else if(lvl === "NEAR"){
+      setBanner("DANGER", side + " NEAR detected");
+    } else if(lvl === "MEDIUM"){
+      setBanner("WARNING", side + " MEDIUM detected");
+    } else if(lvl === "FAR"){
+      setBanner("WARNING", side + " FAR detected");
+    } else {
+      setBanner("NORMAL", "No obstacle");
+    }
+  }catch(e){
+    setBanner("NORMAL", "Cloud not reachable / no data");
+  }
+}
+
+poll();
+setInterval(poll, 1000);
+</script>
+</body>
+</html>
